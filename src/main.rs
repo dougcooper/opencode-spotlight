@@ -12,8 +12,22 @@ use std::io::Write;
 fn main() {
     let mut args = std::env::args_os().skip(1);
     let code = match args.next().and_then(|a| a.into_string().ok()).as_deref() {
-        Some("install") => desktop::cli_install(),
-        Some("uninstall") => desktop::cli_uninstall(),
+        Some("install") => match args.next().and_then(|a| a.into_string().ok()).as_deref() {
+            None => desktop::cli_install(),
+            Some(extra) => {
+                eprintln!("opencode-spotlight: 'install' takes no arguments (got '{extra}')");
+                2
+            }
+        },
+        Some("uninstall") => match args.next().and_then(|a| a.into_string().ok()).as_deref() {
+            None => desktop::cli_uninstall(),
+            Some(extra) => {
+                eprintln!(
+                    "opencode-spotlight: 'uninstall' takes no arguments (got '{extra}'); it removes exactly what 'install' recorded"
+                );
+                2
+            }
+        },
         Some("help") => print_help(),
         Some("--help") | Some("-h") => print_help(),
         Some("--version") | Some("-V") => {
