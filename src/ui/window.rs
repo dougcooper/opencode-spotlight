@@ -17,6 +17,7 @@ use gtk4::{Button, EventControllerKey, Label, Orientation, Spinner, PropagationP
 
 use super::attachments::AttachmentTray;
 use super::controller::UiContext;
+use super::input::InputActions;
 use super::input::InputBar;
 use super::transcript::Transcript;
 use crate::bridge::BridgeIn;
@@ -80,6 +81,7 @@ pub struct OverlayWindow {
     pub transcript: Transcript,
     pub input: Rc<InputBar>,
     pub attachments: Rc<AttachmentTray>,
+    pub model_chip: Button,
     toast: adw::ToastOverlay,
     conn_dot: Label,
     busy_spinner: Spinner,
@@ -128,12 +130,19 @@ impl OverlayWindow {
             .css_classes(["flat"])
             .build();
 
+        let model_chip = Button::builder()
+            .label("⚡ quick")
+            .tooltip_text("Toggle between the quick and deep (thinking) models")
+            .visible(false)
+            .css_classes(["flat", "model-chip"])
+            .build();
         let status = GtkBox::builder()
             .orientation(Orientation::Horizontal)
             .spacing(6)
             .css_classes(["overlay-status"])
             .visible(false)
             .build();
+        status.append(&model_chip);
         status.append(&conn_dot);
         status.append(&busy_spinner);
         status.append(&usage_label);
@@ -232,6 +241,14 @@ impl OverlayWindow {
 
             {
                 let ui_w = Rc::downgrade(ui);
+                model_chip.connect_clicked(move |_| {
+                    if let Some(ui) = ui_w.upgrade() {
+                        InputActions::on_toggle_model(&*ui);
+                    }
+                });
+            }
+            {
+                let ui_w = Rc::downgrade(ui);
                 handoff_button.connect_clicked(move |_| {
                     if let Some(ui) = ui_w.upgrade() {
                         ui.handoff_to_terminal();
@@ -252,6 +269,7 @@ impl OverlayWindow {
                 transcript,
                 input,
                 attachments,
+                model_chip,
                 toast,
                 conn_dot,
                 busy_spinner,
@@ -355,7 +373,8 @@ impl OverlayWindow {
     }
 
     pub fn set_model_chip(&self, label: &str, visible: bool) {
-        self.input.set_model_label(label, visible);
+        self.model_chip.set_label(label);
+        self.model_chip.set_visible(visible);
     }
 
     pub fn push_theme(&self, dark: bool) {

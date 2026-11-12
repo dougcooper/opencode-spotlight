@@ -281,8 +281,7 @@ async fn state_view(context: &Rc<UiContext>) -> String {
         input_text: window.input.text(),
         attachments: window.attachments.len(),
         model_chip: window
-            .input
-            .model_button
+            .model_chip
             .label()
             .unwrap_or_default()
             .to_string(),
