@@ -35,6 +35,12 @@ The compiled binary lands in `./target/` on the host and runs directly on a
 Fedora 44+ desktop (the image builds against the same runtime libs the host
 ships). See [Containerfile](Containerfile) for the details.
 
+**Even simpler**: the repo ships a [justfile](justfile) wrapping all of this —
+`just build-release`, `just test`, `just lint`, `just image`, `just run`,
+`just toggle`, `just install`, `just just-stop`-style commands throughout;
+`just` with no arguments lists them all. Builds/tests always run in the
+container; `run`/`toggle`/`install` execute the built binary on the host.
+
 **Option B — toolbox container on an immutable Fedora system** (what the
 development sessions used):
 
