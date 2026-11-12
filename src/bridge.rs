@@ -51,8 +51,9 @@ pub enum MsgBody {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "t", rename_all = "kebab-case")]
 pub enum BridgeIn {
-    /// Switch the page color scheme.
-    Theme { dark: bool },
+    /// Switch the page color scheme and repaint its base with the resolved
+    /// glass tint (the transcript area then matches the card exactly).
+    Theme { dark: bool, bg: String },
     /// Replace the whole transcript (history load or resync).
     Init { messages: Vec<MsgBody> },
     /// Append a user message.

@@ -85,8 +85,6 @@ impl Transcript {
     /// `on_copy` receives code-block copy requests from the page.
     pub fn new(on_copy: CopySink) -> Self {
         let webview = WebView::new();
-        // Transparent page base so the glass card shows through.
-        webview.set_property("background-color", &gtk4::gdk::RGBA::new(0.0, 0.0, 0.0, 0.0));
         ensure_scheme_registered(&webview);
         let core = Rc::new(Core {
             webview: RefCell::new(None),

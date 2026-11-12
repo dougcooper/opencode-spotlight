@@ -221,6 +221,7 @@
     switch (payload.t) {
       case "theme": {
         document.body.classList.toggle("dark", !!payload.dark);
+        if (payload.bg) document.body.style.background = payload.bg;
         break;
       }
       case "reset": {

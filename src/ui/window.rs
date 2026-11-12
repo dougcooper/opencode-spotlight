@@ -360,7 +360,31 @@ impl OverlayWindow {
         self.window.remove_css_class("light");
         self.window.remove_css_class("dark");
         self.window.add_css_class(if dark { "dark" } else { "light" });
-        self.transcript.send(&BridgeIn::Theme { dark });
+        self.transcript.send(&Self::theme_payload(dark));
+    }
+
+    /// The transcript page paints itself with the same resolved glass tint
+    /// the card uses (accent mixed into the Adwaita window base color), so
+    /// the page area reads as part of the card in both modes.
+    fn theme_payload(dark: bool) -> BridgeIn {
+        let base: [f64; 3] = if dark { [0.141, 0.141, 0.157] } else { [0.980, 0.980, 0.980] };
+        // `accent_color` resolves the user's chosen GNOME accent to an RGBA.
+        let weights = if dark {
+            (13.0f64 / 100.0, 1.0 - 13.0f64 / 100.0)
+        } else {
+            (9.0f64 / 100.0, 1.0 - 9.0f64 / 100.0)
+        };
+        let accent = adw::StyleManager::default().accent_color().to_rgba();
+        let accent_channel = |a: &gdk::RGBA| (a.red() + a.green() + a.blue()) / 3.0;
+        let mix = |b: f64| -> u8 {
+            let a = accent_channel(&accent) as f64;
+            let c = weights.1 * b + weights.0 * a;
+            (c.clamp(0.0, 1.0) * 255.0).round() as u8
+        };
+        BridgeIn::Theme {
+            dark,
+            bg: format!("#{:02x}{:02x}{:02x}", mix(base[0]), mix(base[1]), mix(base[2])),
+        }
     }
 
     pub fn size(&self) -> (i32, i32) {
