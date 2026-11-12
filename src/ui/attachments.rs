@@ -59,6 +59,17 @@ impl AttachmentTray {
         self.core.staged.borrow().len()
     }
 
+    /// Stage raw PNG bytes (debug IPC path: same chip as a Ctrl+V paste).
+    pub fn add_from_png(&self, png: Vec<u8>) -> Result<String, String> {
+        if self.core.staged.borrow().len() >= MAX_ATTACHMENTS {
+            return Err(format!("At most {MAX_ATTACHMENTS} images per message."));
+        }
+        let bytes = glib::Bytes::from_owned(png);
+        let texture = gdk::Texture::from_bytes(&bytes)
+            .map_err(|e| format!("Could not decode the PNG image: {e}"))?;
+        self.add_from_texture(&texture)
+    }
+
     /// Encode a clipboard texture into the tray as a PNG chip.
     /// Returns the display name on success.
     pub fn add_from_texture(&self, texture: &gdk::Texture) -> Result<String, String> {
@@ -129,16 +140,6 @@ impl AttachmentTray {
         self.drain_chips();
         self.core.container.set_visible(false);
         items
-    }
-
-    /// Non-consuming view of the staged attachments as `(png, name)`.
-    pub fn staged(&self) -> Vec<(Vec<u8>, String)> {
-        self.core
-            .staged
-            .borrow()
-            .iter()
-            .map(|s| (s.png.clone(), s.name.clone()))
-            .collect()
     }
 
     /// Clear the tray (used when staged images are rejected).

@@ -16,9 +16,54 @@ use webkit6::{LoadEvent, UserContentManager, WebView};
 
 use crate::bridge::{BridgeIn, BridgeOut};
 
-pub const PAGE_URI: &str =
-    "resource:///dev/dougcooper/opencode-spotlight/webview/index.html";
+pub const PAGE_URI: &str = "spotlight:///index.html";
 const HANDLER_NAME: &str = "bridge";
+const SCHEME: &str = "spotlight";
+const RESOURCE_PREFIX: &str = "/dev/dougcooper/opencode-spotlight/webview";
+
+/// Allow-listed page files served via the custom scheme; anything else 404s.
+const PAGE_FILES: &[(&str, &str)] = &[
+    ("index.html", "text/html"),
+    ("style.css", "text/css"),
+    ("app.js", "application/javascript"),
+    ("vendor/marked.min.js", "application/javascript"),
+    ("vendor/purify.min.js", "application/javascript"),
+    ("vendor/highlight.min.js", "application/javascript"),
+];
+
+static SCHEME_REGISTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Register the `spotlight://` scheme once. The web process cannot see
+/// resources registered in the UI process, so the handler serves embedded
+/// bundle bytes per request instead.
+fn ensure_scheme_registered(webview: &WebView) {
+    if SCHEME_REGISTERED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    webview
+        .web_context()
+        .expect("the webview always has a web context")
+        .register_uri_scheme(SCHEME, |request| {
+        let path = request.path().unwrap_or_default();
+        let rel = path.trim_start_matches('/');
+        let Some((_, content_type)) = PAGE_FILES.iter().find(|(name, _)| *name == rel) else {
+            eprintln!("opencode-spotlight: spotlight request for unknown path: {rel}");
+            return;
+        };
+        let resource = format!("{RESOURCE_PREFIX}/{rel}");
+        match gio::resources_lookup_data(&resource, gio::ResourceLookupFlags::NONE) {
+            Ok(bytes) => {
+                let stream = gio::MemoryInputStream::from_bytes(&bytes);
+                let response = webkit6::URISchemeResponse::new(&stream, bytes.len() as i64);
+                response.set_content_type(content_type);
+                request.finish_with_response(&response);
+            }
+            Err(e) => {
+                eprintln!("opencode-spotlight: spotlight/{rel} lookup failed: {e}");
+            }
+        }
+    });
+}
 
 pub type CopySink = Box<dyn Fn(&str)>;
 
@@ -40,6 +85,7 @@ impl Transcript {
     /// `on_copy` receives code-block copy requests from the page.
     pub fn new(on_copy: CopySink) -> Self {
         let webview = WebView::new();
+        ensure_scheme_registered(&webview);
         let core = Rc::new(Core {
             webview: RefCell::new(None),
             ready: Cell::new(false),
@@ -50,6 +96,12 @@ impl Transcript {
         let manager: UserContentManager = webview
             .user_content_manager()
             .expect("the webview always has a user content manager");
+
+        // Surface page-load failures on stderr during bring-up.
+        webview.connect_load_failed(|_webview, _event, uri, error| {
+            eprintln!("opencode-spotlight: webview load failed: {uri}: {error}");
+            false
+        });
 
         // JS -> Rust. The page posts a JSON payload string to
         // `window.webkit.messageHandlers.bridge.postMessage(...)`.

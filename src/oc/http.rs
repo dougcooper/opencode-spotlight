@@ -239,9 +239,11 @@ impl Client {
                 message: super::truncate(&text, 300),
             });
         }
-        resp.json::<Value>()
-            .await
-            .map_err(|e| ApiError::Parse(e.to_string()))
+        let text = resp.text().await.map_err(|e| ApiError::Parse(e.to_string()))?;
+        if text.trim().is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_str(&text).map_err(|e| ApiError::Parse(e.to_string()))
     }
 
     // ---- resources -------------------------------------------------------
@@ -304,9 +306,12 @@ impl Client {
                 .http
                 .get(format!("{base}/api/session/{id}/message", base = self.base))
                 .header(AUTHORIZATION, self.auth_header())
-                .query(&[("order", "asc"), ("limit", "100")]);
+                .query(&[("limit", "100")]);
             if let Some(cursor) = cursor.take() {
+                // The API rejects `cursor` combined with `order`.
                 req = req.query(&[("cursor", cursor)]);
+            } else {
+                req = req.query(&[("order", "asc")]);
             }
             let resp = req
                 .send()
@@ -378,31 +383,6 @@ impl Client {
         serde_json::from_str(&text).map_err(|e| ApiError::Parse(e.to_string()))
     }
 
-    /// Whether a model accepts image input, per `GET /api/model`. Unknown
-    /// models are assumed capable (the server surfaces its own errors).
-    pub async fn model_supports_image(&self, model: &ModelRef) -> Result<bool, ApiError> {
-        let v = self.json_call("/api/model", None).await?;
-        for item in data_array(&v) {
-            let id = item.get("modelID").or_else(|| item.get("id")).and_then(Value::as_str);
-            let provider = item
-                .get("providerID")
-                .and_then(Value::as_str);
-            if id == Some(model.id.as_str()) && provider == Some(model.provider_id.as_str()) {
-                return Ok(item
-                    .pointer("/capabilities/input")
-                    .and_then(Value::as_array)
-                    .map(|inputs| {
-                        inputs
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .any(|s| s.eq_ignore_ascii_case("image"))
-                    })
-                    .unwrap_or(true));
-            }
-        }
-        Ok(true)
-    }
-
     pub async fn interrupt(&self, id: &str) -> Result<bool, ApiError> {
         let v = self
             .json_call(&format!("/api/session/{id}/interrupt"), Some(json!({})))
@@ -417,12 +397,6 @@ impl Client {
         )
         .await?;
         Ok(())
-    }
-
-    /// The user's default model per OpenCode configuration, if exposed.
-    pub async fn default_model(&self) -> Result<Option<ModelRef>, ApiError> {
-        let v = self.json_call("/api/model/default", None).await?;
-        Ok(extract_model_ref(&v))
     }
 
     pub async fn reply_permission(
@@ -485,23 +459,6 @@ impl Client {
         resp.error_for_status()
             .map_err(|e| ApiError::Unreachable(e.to_string()))
     }
-}
-
-/// Find a `{id, providerID}` model pointer somewhere in a response.
-pub(crate) fn extract_model_ref(v: &Json) -> Option<ModelRef> {
-    for candidate in [
-        v,
-        v.get("data").unwrap_or(&Value::Null),
-        v.pointer("/defaultModel").unwrap_or(&Value::Null),
-        v.pointer("/data/model").unwrap_or(&Value::Null),
-        v.pointer("/data/defaultModel").unwrap_or(&Value::Null),
-        v.pointer("/model").unwrap_or(&Value::Null),
-    ] {
-        if let Ok(m) = serde_json::from_value::<ModelRef>(candidate.clone()) {
-            return Some(m);
-        }
-    }
-    None
 }
 
 fn session_from_value(v: &Json) -> Result<SessionInfo, ApiError> {

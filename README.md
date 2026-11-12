@@ -13,7 +13,7 @@ contract is a plain command.
   TUI/desktop app already use), so your providers, default agent, MCP servers,
   and sessions are exactly the ones you already have. Chats live in a fixed
   *scratch directory* (`~/.local/share/opencode-spotlight/scratch` by default)
-  and re-open where you left off.
+  and re-open where you left off. Clipboard images are saved under `scratch/media/` and attached by path, so providers that read attachments from disk (all current ones) see them.
 - Everything in the window is native GTK, except the chat transcript, which is
   a local WebKitGTK page (bundled with the binary, zero network access).
 
@@ -101,16 +101,20 @@ app id `dev.dougcooper.opencode-spotlight` — e.g. in sway:
 
 ## Controls
 
-- **Hotkey** — show/hide; **Esc**, click-away, and close all hide (the
-  conversation keeps running in the service either way).
-- **Enter** sends, **Shift+Enter** newline; paste text as usual.
-- **Ctrl+V with a screenshot in the clipboard** stages it as an image
-  attachment (shown as a removable chip).
-- **⚡/🧠 chip** — flips the next message between your configured quick and
-  deep models (see config).
+- **Hotkey** — summons the slim search pill; **Esc**, click-away, and close all
+  hide it (the conversation keeps running in the service either way). Every
+  summon starts as the pill; press **↓** (or send, or paste an image) to expand
+  into the chat card.
+- **Enter** sends, **Shift+Enter** newline; the pill shows "Ask OpenCode…"
+  while empty and a magnifier at its left, Spotlight-style.
+- **Ctrl+V with a screenshot in the clipboard** stages it as an image chip.
+  Image messages automatically answer with the quick (flash) model — the chip
+  selection is restored after the turn.
+- **⚡/🧠 chip** — flips the session model for text messages between your
+  configured quick and deep models (see config).
 - **Stop** — aborts the running turn.
-- **Terminal button** — continues the current chat in the OpenCode TUI, spawned
-  in the scratch directory.
+- **Terminal button** (expanded view) — continues the current chat in the
+  OpenCode TUI, spawned in the scratch directory.
 - When a tool needs permission, the overlay asks with **Allow once / Allow
   always / Reject**, just like the TUI would.
 

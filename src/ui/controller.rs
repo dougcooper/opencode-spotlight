@@ -11,14 +11,12 @@ use libadwaita as adw;
 use adw::prelude::*;
 use gio;
 use gtk4::glib;
-use base64::Engine;
 use std::os::unix::process::CommandExt;
 
-use base64::engine::general_purpose::STANDARD as B64;
 
 use super::input::InputActions;
 use super::window::OverlayWindow;
-use crate::oc::service::{Cmd, ImageDto, UiEvent};
+use crate::oc::service::{Cmd, ConnState, ImageDto, UiEvent};
 use crate::oc::{ModelRef, PermReq};
 use crate::state::{Config, Paths};
 
@@ -31,12 +29,12 @@ struct ModelPair {
 pub struct UiContext {
     cmd_tx: async_channel::Sender<Cmd>,
     #[allow(dead_code)] // kept for symmetric ownership; the pump holds the original
-    ui_rx: async_channel::Receiver<UiEvent>,
     window: RefCell<Option<Rc<OverlayWindow>>>,
     app: RefCell<Option<adw::Application>>,
     paths: Paths,
     config: Config,
     perms: RefCell<VecDeque<PermReq>>,
+    conn: std::cell::RefCell<Option<ConnState>>,
     dialog_open: Cell<bool>,
     busy: Cell<bool>,
     quick_selected: Cell<bool>,
@@ -60,12 +58,12 @@ impl UiContext {
 
         let context = Rc::new(Self {
             cmd_tx,
-            ui_rx: ui_rx.clone(),
             window: RefCell::new(None),
             app: RefCell::new(None),
             paths,
             config,
             perms: RefCell::new(VecDeque::new()),
+            conn: RefCell::new(None),
             dialog_open: Cell::new(false),
             busy: Cell::new(false),
             quick_selected: Cell::new(true),
@@ -115,6 +113,10 @@ impl UiContext {
             .as_ref()
             .expect("overlay window was built")
             .clone();
+        if !window.is_visible() {
+            // Spotlight-style: every summon starts as the slim pill.
+            window.collapse_for_summon();
+        }
         if window.is_visible() {
             if toggle {
                 window.hide();
@@ -152,8 +154,23 @@ impl UiContext {
     }
 
     fn handle(self: &Rc<Self>, event: UiEvent) {
+        if std::env::var("SPOTLIGHT_DEBUG").as_deref() == Ok("1") {
+            let summary = match &event {
+                UiEvent::Conn(c) => format!("conn {c:?}"),
+                UiEvent::Busy(b) => format!("busy {b}"),
+                UiEvent::Usage { tokens, cost } => format!("usage {tokens}/{cost}"),
+                UiEvent::Perm(p) => format!("perm {}", p.id),
+                UiEvent::PermReplied { id } => format!("perm-replied {id}"),
+                UiEvent::Bridge(p) => format!("bridge {:?}", p),
+                UiEvent::PromptQueued => "prompt-queued".into(),
+                UiEvent::Error(m) => format!("error {m}"),
+            };
+            eprintln!("spotlight: event {summary}");
+        }
+        crate::ui::debug_ipc::record_event(&event);
         match event {
             UiEvent::Conn(state) => {
+                *self.conn.borrow_mut() = Some(state.clone());
                 if let Some(window) = self.window.borrow().as_ref() {
                     window.set_conn(state);
                 }
@@ -180,7 +197,7 @@ impl UiContext {
             }
             UiEvent::Bridge(payload) => {
                 if let Some(window) = self.window.borrow().as_ref() {
-                    window.transcript().send(&payload);
+                    window.transcript.send(&payload);
                 }
             }
             UiEvent::PromptQueued => {
@@ -263,20 +280,50 @@ impl UiContext {
         if self.busy.get() {
             return; // the send button is disabled while busy anyway
         }
+        // Apple-Spotlight behavior: sending from the collapsed pill expands
+        // the chat card so the answer is visible as it streams.
+        window.expand();
         let text = window.input.text();
         if window.input.can_send() {
-            let images: Vec<ImageDto> = window
-                .attachments
-                .staged()
+            let images: Vec<ImageDto> = self
+                .materialize_attachments()
                 .into_iter()
-                .map(|(png, name)| ImageDto {
-                    data_uri: format!("data:image/png;base64,{}", B64.encode(png)),
+                .map(|(path, name)| ImageDto {
+                    data_uri: format!("file://{}", path.display()),
                     name,
                 })
                 .collect();
             let _ = self.cmd_tx.send_blocking(Cmd::Send { text, images });
             window.input.set_attachments(window.attachments.len());
         }
+    }
+
+    /// Write staged clipboard images into the scratch directory and return
+    /// `(file path, name)` pairs. OpenCode providers deliver images by file
+    /// path (data-URI blobs never reach the model).
+    fn materialize_attachments(&self) -> Vec<(std::path::PathBuf, String)> {
+        let attach_dir = self
+            .config
+            .scratch_dir(&self.paths)
+            .join("media");
+        let _ = std::fs::create_dir_all(&attach_dir);
+        let mut out = Vec::new();
+        for (png, name) in self.window.borrow().as_ref().map_or(vec![], |w| {
+            w.attachments.take_all()
+        }) {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let path = attach_dir.join(format!("img-{stamp}-{}.png", out.len()));
+            match std::fs::write(&path, &png) {
+                Ok(()) => out.push((path, name)),
+                Err(e) => {
+                    eprintln!("opencode-spotlight: could not save attachment: {e}");
+                }
+            }
+        }
+        out
     }
 
     fn stop(&self) {
@@ -327,6 +374,7 @@ impl UiContext {
         }
 
         // The tray and input bar are needed by the read callback.
+        window.expand();
         let tray = window.attachments.clone();
         let window_weak: std::rc::Weak<OverlayWindow> = Rc::downgrade(&window);
         clipboard.read_texture_async(None::<&gio::Cancellable>, move |result| {
@@ -375,11 +423,59 @@ impl UiContext {
         let _ = self.cmd_tx.send_blocking(Cmd::NewChat);
     }
 
+    /// Debug hook for the model toggle chip.
+    pub fn toggle_model_chip(&self) {
+        self.toggle_model();
+    }
+
     fn toast_in_window(&self, message: &str) {
         if let Some(window) = self.window.borrow().as_ref() {
             window.toast(message);
         } else {
             eprintln!("opencode-spotlight: {message}");
+        }
+    }
+
+    // ---- debug IPC ---------------------------------------------------------
+
+    /// The overlay window handle for the debug surface.
+    pub fn window_take(&self) -> Option<Rc<OverlayWindow>> {
+        self.window.borrow().clone()
+    }
+
+    pub fn busy(&self) -> bool {
+        self.busy.get()
+    }
+
+    pub fn connection(&self) -> Option<ConnState> {
+        self.conn.borrow().clone()
+    }
+
+    /// Make sure the window exists and is presented (debug determinism).
+    pub fn debug_summon(self: &Rc<Self>) {
+        match self.window.borrow().as_ref() {
+            Some(window) => window.present(),
+            None => self.show_or_toggle(false),
+        }
+    }
+
+    /// Type into the input bar exactly as if the user had, then send.
+    pub fn debug_send(self: &Rc<Self>, text: &str) {
+        self.debug_summon();
+        if let Some(window) = self.window.borrow().as_ref() {
+            window.input.set_text(text);
+        }
+        self.send_message();
+    }
+
+    /// Stage a PNG like a Ctrl+V paste.
+    pub fn debug_paste_png(self: &Rc<Self>, bytes: Vec<u8>) {
+        self.debug_summon();
+        if let Some(window) = self.window.borrow().as_ref() {
+            match window.attachments.add_from_png(bytes) {
+                Ok(_name) => window.input.set_attachments(window.attachments.len()),
+                Err(why) => window.toast(&why),
+            }
         }
     }
 }

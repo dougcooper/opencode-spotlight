@@ -10,8 +10,8 @@ mod ui;
 use std::io::Write;
 
 fn main() {
-    let mut args = std::env::args().skip(1);
-    let code = match args.next().as_deref() {
+    let mut args = std::env::args_os().skip(1);
+    let code = match args.next().and_then(|a| a.into_string().ok()).as_deref() {
         Some("install") => desktop::cli_install(),
         Some("uninstall") => desktop::cli_uninstall(),
         Some("help") => print_help(),
@@ -20,6 +20,7 @@ fn main() {
             env_report();
             0
         }
+        Some("debug") => debug_client(args.by_ref().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>()),
         // Everything else (--toggle, the empty launch) goes through the GTK
         // application so D-Bus routing reaches the resident instance.
         _ => app::run(),
@@ -49,4 +50,34 @@ fn env_report() -> i32 {
     println!("state:  {}", paths.state_file().display());
     println!("scratch: {}", paths.scratch_dir().display());
     0
+}
+
+/// `opencode-spotlight debug <verb> [payload…]` — talk to a running app's
+/// debug socket (requires the app launched with SPOTLIGHT_DEBUG_IPC=1).
+fn debug_client(rest: Vec<String>) -> i32 {
+    use std::io::{BufRead, BufReader, Write};
+    use std::os::unix::net::UnixStream;
+    let mut it = rest.into_iter();
+    let verb = it.next().unwrap_or_else(|| "state".into());
+    let payload = it.collect::<Vec<_>>().join(" ");
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| "/tmp".into());
+    let path = format!("{runtime_dir}/{}", ui::debug_ipc::SOCKET_NAME);
+    let Ok(mut stream) = UnixStream::connect(&path) else {
+        eprintln!("opencode-spotlight: debug socket not active ({path}).");
+        eprintln!("Start the app with SPOTLIGHT_DEBUG_IPC=1 to enable it.");
+        return 1;
+    };
+    let command = if payload.is_empty() {
+        verb
+    } else {
+        format!("{verb} {payload}")
+    };
+    stream.write_all(command.as_bytes()).ok();
+    stream.write_all(b"\n").ok();
+    stream.flush().ok();
+    let mut reply = String::new();
+    if let Ok(_reader) = BufReader::new(&stream).read_line(&mut reply) {
+        println!("{reply}");
+    }
+    reply.contains("\"ok\":true") as i32
 }

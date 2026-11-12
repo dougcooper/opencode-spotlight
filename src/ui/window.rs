@@ -1,6 +1,9 @@
-//! The overlay window: a compact floating spotlight. Esc, focus loss, and
-//! close all hide it; the hotkey and button bar stay in the controller.
+//! The overlay window: an Apple-Spotlight-style flow. Summoning shows a slim
+//! centered pill; sending, pasting an image, or pressing ↓ expands it into
+//! the chat card with the transcript above the input. Esc, focus loss, and
+//! close all hide it in either shape.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use libadwaita as adw;
@@ -20,18 +23,22 @@ use crate::bridge::BridgeIn;
 use crate::oc::service::ConnState;
 
 pub const RESOURCE_CSS: &str = "
-.overlay-status { padding: 4px 10px; }
+window.spot { background: transparent; }
+.chat-card { padding: 8px; }
+.chat-card .overlay-status { padding: 0 4px 2px; }
 .dot { font-size: 10px; }
 .conn-ok { color: @success_color; }
 .conn-warn { color: @warning_color; }
 .conn-err { color: @error_color; }
-.attachments { padding: 2px 10px; }
+.attachments { padding: 2px 4px; }
 .attachment-chip { background: alpha(@accent_color, 0.2); border-radius: 6px; padding: 2px 6px; }
 ";
 const APP_TITLE: &str = "OpenCode Spotlight";
+const COLLAPSED: (i32, i32) = (600, 62);
+const EXPANDED: (i32, i32) = (620, 660);
 
 pub struct OverlayWindow {
-    pub window: adw::ApplicationWindow,
+    pub window: adw::Window,
     pub transcript: Transcript,
     pub input: Rc<InputBar>,
     pub attachments: Rc<AttachmentTray>,
@@ -39,18 +46,22 @@ pub struct OverlayWindow {
     conn_dot: Label,
     busy_spinner: Spinner,
     usage_label: Label,
+    status: GtkBox,
+    expanded: Cell<bool>,
 }
 
 impl OverlayWindow {
     pub fn build(app: &adw::Application, ui: &Rc<UiContext>) -> Rc<Self> {
         load_css();
 
-        let window = adw::ApplicationWindow::builder()
+        // AdwWindow gives the floating rounded surface (CSD radius + shadow).
+        let window = adw::Window::builder()
             .application(app)
             .title(APP_TITLE)
-            .default_width(620)
-            .default_height(700)
+            .default_width(COLLAPSED.0)
+            .default_height(COLLAPSED.1)
             .build();
+        window.add_css_class("spot");
 
         let transcript = Transcript::new(make_copy_sink());
         let attachments = AttachmentTray::build();
@@ -82,6 +93,7 @@ impl OverlayWindow {
             .orientation(Orientation::Horizontal)
             .spacing(6)
             .css_classes(["overlay-status"])
+            .visible(false)
             .build();
         status.append(&conn_dot);
         status.append(&busy_spinner);
@@ -96,7 +108,8 @@ impl OverlayWindow {
 
         let root = GtkBox::builder()
             .orientation(Orientation::Vertical)
-            .spacing(0)
+            .spacing(4)
+            .css_classes(["chat-card"])
             .build();
         root.append(&status);
         root.append(&transcript.webview);
@@ -107,71 +120,8 @@ impl OverlayWindow {
         toast.set_child(Some(&root));
         window.set_content(Some(&toast));
 
-        // Esc hides; Ctrl+V stages clipboard images; everything else passes.
-        {
-            let ui_w = Rc::downgrade(ui);
-            let key_controller = EventControllerKey::new();
-            key_controller.set_propagation_phase(PropagationPhase::Capture);
-            key_controller.connect_key_pressed(move |_ctrl, keyval, _keycode, state| {
-                let Some(ui) = ui_w.upgrade() else { return glib::Propagation::Proceed };
-                if keyval == gdk::Key::Escape {
-                    ui.hide_overlay();
-                    return glib::Propagation::Stop;
-                }
-                let paste = keyval == gdk::Key::v
-                    && state
-                        .contains(gdk::ModifierType::CONTROL_MASK);
-                if paste {
-                    let handled = ui.try_stage_clipboard_image();
-                    if handled {
-                        return glib::Propagation::Stop;
-                    }
-                }
-                glib::Propagation::Proceed
-            });
-            window.add_controller(key_controller);
-        }
-
-        // Focus loss hides (fact 4) — but not while a permission dialog owns
-        // the screen.
-        {
-            let ui_w = Rc::downgrade(ui);
-            let window_w: glib::WeakRef<adw::ApplicationWindow> = {
-                let weak = glib::WeakRef::new();
-                weak.set(Some(&window));
-                weak
-            };
-            window.connect_is_active_notify(move |win| {
-                let Some(ui) = ui_w.upgrade() else { return };
-                if !win.is_active() && !ui.permission_dialog_open()
-                    && let Some(w) = window_w.upgrade() {
-                        w.set_visible(false);
-                    }
-            });
-        }
-
-        // Close hides; the app keeps running (fact 5).
-        window.connect_close_request(|win| {
-            win.set_visible(false);
-            glib::Propagation::Stop
-        });
-
-        {
-            let ui_w = Rc::downgrade(ui);
-            handoff_button.connect_clicked(move |_| {
-                if let Some(ui) = ui_w.upgrade() {
-                    ui.handoff_to_terminal();
-                }
-            });
-        }
-        {
-            let ui_w = Rc::downgrade(ui);
-            new_chat_button.connect_clicked(move |_| {
-                if let Some(ui) = ui_w.upgrade() {
-                    ui.new_chat();
-                }
-            });
-        }
+        // Handlers run inside Rc::new_cyclic below so they can reach the
+        // window itself (weak self ref) for the expand/collapse transitions.
 
         // Theme follows the system style.
         {
@@ -184,20 +134,97 @@ impl OverlayWindow {
             });
         }
 
-        Rc::new(Self {
-            window,
-            transcript,
-            input,
-            attachments,
-            toast,
-            conn_dot,
-            busy_spinner,
-            usage_label,
+        Rc::new_cyclic(|me_w: &std::rc::Weak<Self>| {
+            // Esc hides; Ctrl+V stages images (and expands); ↓ expands to peek.
+            {
+                let me_w = me_w.clone();
+                let ui_w = Rc::downgrade(ui);
+                let key_controller = EventControllerKey::new();
+                key_controller.set_propagation_phase(PropagationPhase::Capture);
+                key_controller.connect_key_pressed(move |_ctrl, keyval, _keycode, state| {
+                    let Some(me) = me_w.upgrade() else {
+                        return glib::Propagation::Proceed
+                    };
+                    let Some(ui) = ui_w.upgrade() else {
+                        return glib::Propagation::Stop
+                    };
+                    if keyval == gdk::Key::Escape {
+                        ui.hide_overlay();
+                        return glib::Propagation::Stop;
+                    }
+                    let paste =
+                        keyval == gdk::Key::v && state.contains(gdk::ModifierType::CONTROL_MASK);
+                    if paste {
+                        me.expand();
+                        let handled = ui.try_stage_clipboard_image();
+                        if handled {
+                            return glib::Propagation::Stop;
+                        }
+                    }
+                    if keyval == gdk::Key::Down && me.expand() {
+                        return glib::Propagation::Stop;
+                    }
+                    glib::Propagation::Proceed
+                });
+                window.add_controller(key_controller);
+            }
+
+            // Focus loss hides (fact 4) — but not while a permission dialog
+            // owns the screen.
+            {
+                let ui_w = Rc::downgrade(ui);
+                window.connect_is_active_notify(move |win| {
+                    let Some(ui) = ui_w.upgrade() else { return };
+                    if !win.is_active() && !ui.permission_dialog_open() {
+                        win.set_visible(false);
+                    }
+                });
+            }
+
+            // Close hides; the app keeps running (fact 5).
+            window.connect_close_request(|win| {
+                win.set_visible(false);
+                glib::Propagation::Stop
+            });
+
+            {
+                let ui_w = Rc::downgrade(ui);
+                handoff_button.connect_clicked(move |_| {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.handoff_to_terminal();
+                    }
+                });
+            }
+            {
+                let ui_w = Rc::downgrade(ui);
+                new_chat_button.connect_clicked(move |_| {
+                    if let Some(ui) = ui_w.upgrade() {
+                        ui.new_chat();
+                    }
+                });
+            }
+
+            Self {
+                window,
+                transcript,
+                input,
+                attachments,
+                toast,
+                conn_dot,
+                busy_spinner,
+                usage_label,
+                status,
+                expanded: Cell::new(false),
+            }
         })
     }
 
     pub fn is_visible(&self) -> bool {
         self.window.is_visible()
+    }
+
+    pub fn is_expanded(&self) -> bool {
+        self.expanded.get()
     }
 
     pub fn present(&self) {
@@ -208,6 +235,48 @@ impl OverlayWindow {
 
     pub fn hide(&self) {
         self.window.set_visible(false);
+    }
+
+    /// Expand into the chat card. Returns true when the shape changed.
+    pub fn expand(&self) -> bool {
+        if self.expanded.get() {
+            return false;
+        }
+        self.expanded.set(true);
+        self.transcript.webview.set_visible(true);
+        self.status.set_visible(true);
+        self.attachments
+            .widget()
+            .set_visible(self.attachments.len() > 0);
+        self.input.set_pill(false);
+        self.retarget(EXPANDED);
+        true
+    }
+
+    /// Collapse to the search pill (used before presenting so every summon
+    /// starts compact, Spotlight-style).
+    pub fn collapse_for_summon(&self) {
+        self.expanded.set(false);
+        self.transcript.webview.set_visible(false);
+        self.status.set_visible(false);
+        self.attachments.widget().set_visible(false);
+        self.input.set_pill(true);
+        // Pin the minimum so hidden-but-sizeable children cannot inflate the
+        // pill's mapped height.
+        self.window.set_size_request(COLLAPSED.0, COLLAPSED.1);
+        self.window.set_default_size(COLLAPSED.0, COLLAPSED.1);
+    }
+
+    /// Resize by hiding and remapping — reliable on Wayland.
+    fn retarget(&self, size: (i32, i32)) {
+        self.window.set_size_request(-1, -1);
+        self.window.set_default_size(size.0, size.1);
+        self.window.set_visible(false);
+        let window = self.window.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(20), move || {
+            window.set_visible(true);
+            window.present();
+        });
     }
 
     pub fn toast(&self, message: &str) {
@@ -241,23 +310,19 @@ impl OverlayWindow {
     }
 
     pub fn set_usage(&self, tokens: u64, cost: f64) {
-        self.usage_label.set_text(&format!(
-            "▲ {tokens} tokens · ${cost:.4}",
-        ));
+        self.usage_label.set_text(&format!("▲ {tokens} tokens · ${cost:.4}"));
     }
 
-    /// Push the current model chip state (chip visible only when
-    /// quick/deep is configured).
     pub fn set_model_chip(&self, label: &str, visible: bool) {
         self.input.set_model_label(label, visible);
     }
 
-    pub fn transcript(&self) -> &Transcript {
-        &self.transcript
-    }
-
     pub fn push_theme(&self, dark: bool) {
         self.transcript.send(&BridgeIn::Theme { dark });
+    }
+
+    pub fn size(&self) -> (i32, i32) {
+        (self.window.width(), self.window.height())
     }
 }
 

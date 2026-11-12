@@ -2,6 +2,7 @@
 //! that bridges the GTK main loop to the backend.
 
 pub mod attachments;
+pub mod debug_ipc;
 pub mod controller;
 pub mod input;
 pub mod transcript;

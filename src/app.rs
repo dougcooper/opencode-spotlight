@@ -33,7 +33,11 @@ pub fn run() -> i32 {
             let config = Config::load(&paths);
             let ui = UiContext::start(paths, config);
             ui.set_app(&app_c);
-            *context.borrow_mut() = Some(ui);
+            *context.borrow_mut() = Some(ui.clone());
+
+            if std::env::var("SPOTLIGHT_DEBUG_IPC").as_deref() == Ok("1") {
+                crate::ui::debug_ipc::activate(ui);
+            }
 
             // Only the primary stays resident; secondaries must exit after
             // routing their command line to the primary (registration is

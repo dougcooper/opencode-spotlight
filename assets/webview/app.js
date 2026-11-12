@@ -94,6 +94,7 @@
       el: null,
       text: "",
       reasoning: "",
+      images: [],
       tools: new Map(),
       streaming: false,
       dirty: true,

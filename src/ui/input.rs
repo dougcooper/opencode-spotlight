@@ -24,6 +24,9 @@ pub struct InputBar {
     pub stop_button: Button,
     pub model_button: Button,
     pub hint: Label,
+    pub placeholder: Label,
+    scroller: gtk4::ScrolledWindow,
+    pilled: Cell<bool>,
     busy: Cell<bool>,
     staged_count: Cell<usize>,
     has_text: Cell<bool>,
@@ -77,14 +80,37 @@ impl InputBar {
             .css_classes(["send"])
             .build();
 
+        let magnifier = gtk4::Image::builder()
+            .icon_name("edit-find-symbolic")
+            .css_classes(["dim-label"])
+            .valign(gtk4::Align::Center)
+            .build();
+        input_row.append(&magnifier);
+
         input_row.append(&model_button);
         let scroller = gtk4::ScrolledWindow::builder()
             .hexpand(true)
             .vscrollbar_policy(gtk4::PolicyType::External)
-            .height_request(64)
+            .hscrollbar_policy(gtk4::PolicyType::Never)
+            .height_request(36)
             .build();
         scroller.set_child(Some(&text_view));
-        input_row.append(&scroller);
+
+        // Spotlight-style placeholder shown while the entry is empty.
+        let placeholder = Label::builder()
+            .label("Ask OpenCode…")
+            .halign(gtk4::Align::Start)
+            .valign(gtk4::Align::Start)
+            .margin_start(10)
+            .margin_top(9)
+            .css_classes(["dim-label"])
+            .build();
+        let overlay = gtk4::Overlay::new();
+        overlay.set_child(Some(&scroller));
+        overlay.add_overlay(&placeholder);
+        placeholder.set_sensitive(false); // clicks fall through to the entry
+        placeholder.set_visible(true);
+        input_row.append(&overlay);
         {
             let action_row = GtkBox::builder()
                 .orientation(Orientation::Horizontal)
@@ -137,6 +163,9 @@ impl InputBar {
             stop_button: stop_button.clone(),
             model_button: model_button.clone(),
             hint,
+            placeholder: placeholder.clone(),
+            scroller: scroller.clone(),
+            pilled: Cell::new(true),
             busy: Cell::new(false),
             staged_count: Cell::new(0),
             has_text: Cell::new(false),
@@ -153,12 +182,20 @@ impl InputBar {
                         .to_string();
                     let had = bar.has_text.get();
                     bar.has_text.set(!text.is_empty());
+                    bar.placeholder.set_visible(text.is_empty());
                     if had != bar.has_text.get() {
                         bar.refresh_send();
                     }
                 });
         }
         bar
+    }
+
+    /// Seed the input bar (debug IPC `send` seeds then triggers the send).
+    pub fn set_text(&self, text: &str) {
+        self.text_view.buffer().set_text(text);
+        self.has_text.set(!text.is_empty());
+        self.refresh_send();
     }
 
     pub fn text(&self) -> String {
@@ -172,7 +209,14 @@ impl InputBar {
     pub fn clear(&self) {
         self.text_view.buffer().set_text("");
         self.has_text.set(false);
+        self.placeholder.set_visible(true);
         self.refresh_send();
+    }
+
+    /// Pill height while collapsed, taller entry once the chat card is open.
+    pub fn set_pill(&self, collapsed: bool) {
+        self.pilled.set(collapsed);
+        self.scroller.set_size_request(-1, if collapsed { 36 } else { 72 });
     }
 
     pub fn focus(&self) {

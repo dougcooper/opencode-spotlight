@@ -58,6 +58,12 @@ pub enum UiEvent {
     PromptQueued,
 }
 
+/// Tracks the session's current model and the image-flow auto-switch.
+struct ImageFlow {
+    current: Option<ModelRef>,
+    restore: Option<ModelRef>,
+}
+
 struct Deps {
     paths: Paths,
     config: Config,
@@ -98,6 +104,10 @@ async fn run(deps: Deps) {
     let mut client: Option<Client> = None;
     let mut session: Option<SessionInfo> = None;
     let mut resync;
+    let mut image_flow = ImageFlow {
+        current: None,
+        restore: None,
+    };
     resync = false;
 
     loop {
@@ -120,7 +130,14 @@ async fn run(deps: Deps) {
                 // Flush buffered commands right after (re)connection so a
                 // message typed while the service was down goes out now.
                 while let Some(cmd) = pending.pop_front() {
-                    feed(client.as_ref().unwrap(), &mut session, cmd, &deps).await;
+                    feed(
+                        client.as_ref().unwrap(),
+                        &mut session,
+                        cmd,
+                        &deps,
+                        &mut image_flow,
+                    )
+                    .await;
                 }
 
                 if let Some(info) = session.as_ref() {
@@ -131,8 +148,18 @@ async fn run(deps: Deps) {
                 let _ = deps.ui_tx.send(UiEvent::Conn(ConnState::Connected)).await;
                 let _ = deps.ui_tx.send(UiEvent::Busy(false)).await;
 
-                match connection_loop(client.as_ref().unwrap(), session.take(), &deps).await {
-                    LoopEnd::Reconnect => resync = true,
+                match connection_loop(
+                    client.as_ref().unwrap(),
+                    session.take(),
+                    &deps,
+                    &mut image_flow,
+                )
+                .await
+                {
+                    LoopEnd::Reconnect(kept) => {
+                        session = kept;
+                        resync = true;
+                    }
                 }
             }
             Err(why) => {
@@ -186,15 +213,24 @@ fn spawn_service() {
 }
 
 enum LoopEnd {
-    Reconnect,
+    Reconnect(Option<SessionInfo>),
 }
 
-async fn connection_loop(client: &Client, session: Option<SessionInfo>, deps: &Deps) -> LoopEnd {
+async fn connection_loop(
+    client: &Client,
+    session: Option<SessionInfo>,
+    deps: &Deps,
+    image_flow: &mut ImageFlow,
+) -> LoopEnd {
+    image_flow.current = session
+        .as_ref()
+        .and_then(|s| s.model.clone())
+        .or_else(|| image_flow.current.clone());
     let mut stream = match subscribe(client).await {
         Ok(s) => s,
         Err(e) => {
             let _ = deps.ui_tx.send(UiEvent::Error(e.to_string())).await;
-            return LoopEnd::Reconnect;
+            return LoopEnd::Reconnect(session);
         }
     };
 
@@ -206,22 +242,22 @@ async fn connection_loop(client: &Client, session: Option<SessionInfo>, deps: &D
 
             cmd = deps.cmd_rx.recv() => {
                 match cmd {
-                    Ok(Cmd::RetryConnect) => return LoopEnd::Reconnect,
+                    Ok(Cmd::RetryConnect) => return LoopEnd::Reconnect(session),
                     Ok(cmd) => {
-                        feed(client, &mut session, cmd, deps).await;
+                        feed(client, &mut session, cmd, deps, image_flow).await;
                     }
-                    Err(_) => return LoopEnd::Reconnect, // UI went away; the outer loop retries
+                    Err(_) => return LoopEnd::Reconnect(session), // UI went away; the outer loop retries
                 }
             }
 
             event = stream.next() => {
                 match event {
-                    None => return LoopEnd::Reconnect,
+                    None => return LoopEnd::Reconnect(session),
                     Some(Err(e)) => {
                         let _ = deps.ui_tx.send(UiEvent::Bridge(BridgeIn::Note {
                             text: format!("connection interrupted ({e}); reconnecting…"),
                         })).await;
-                        return LoopEnd::Reconnect;
+                        return LoopEnd::Reconnect(session);
                     }
                     Some(Ok(ev)) => {
                         let active = session.as_ref().map(|s| s.id.clone()).unwrap_or_default();
@@ -282,7 +318,7 @@ async fn connection_loop(client: &Client, session: Option<SessionInfo>, deps: &D
                                 let mut state = AppState::load(&deps.paths);
                                 state.last_session_id = None;
                                 state.save(&deps.paths);
-                                return LoopEnd::Reconnect;
+                                return LoopEnd::Reconnect(session);
                             }
                             _ => {}
                         }
@@ -294,36 +330,16 @@ async fn connection_loop(client: &Client, session: Option<SessionInfo>, deps: &D
 }
 
 /// Apply a UI command; shared between the connection loop and the post-reconnect flush.
-async fn feed(client: &Client, session: &mut Option<SessionInfo>, cmd: Cmd, deps: &Deps) {
+async fn feed(
+    client: &Client,
+    session: &mut Option<SessionInfo>,
+    cmd: Cmd,
+    deps: &Deps,
+    image_flow: &mut ImageFlow,
+) {
     let active = session.as_ref().map(|s| s.id.clone()).unwrap_or_default();
     match cmd {
         Cmd::Send { text, images } => {
-            // Image-capability gate first: nothing is committed until we know
-            // the model can take the attachments (fact-24).
-            if !images.is_empty()
-                && let Some(model) = image_model(session, client).await {
-                    match client.model_supports_image(&model).await {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            let _ = deps
-                                .ui_tx
-                                .send(UiEvent::Error(format!(
-                                    "Model '{}' cannot accept images — remove the attachment or switch models.",
-                                    model.id
-                                )))
-                                .await;
-                            return;
-                        }
-                        Err(e) => {
-                            let _ = deps
-                                .ui_tx
-                                .send(UiEvent::Error(format!("Could not check model capabilities: {e}")))
-                                .await;
-                            return;
-                        }
-                    }
-                }
-
             // If there is no session yet, create one now.
             let session_id = if active.is_empty() {
                 match create_chat(client, deps).await {
@@ -342,6 +358,42 @@ async fn feed(client: &Client, session: &mut Option<SessionInfo>, cmd: Cmd, deps
             } else {
                 active
             };
+
+            // Per the user's rule: image messages answer with the quick
+            // (flash) model. Switch when needed; restore once idle.
+            if !images.is_empty() {
+                let quick = deps
+                    .config
+                    .models
+                    .as_ref()
+                    .and_then(|m| m.quick.as_ref())
+                    .map(|m| m.into());
+                if let Some(quick) = quick
+                    && image_flow.current.as_ref() != Some(&quick)
+                {
+                        match client.set_model(&session_id, &quick).await {
+                            Ok(()) => {
+                                image_flow.restore = image_flow.current.take();
+                                image_flow.current = Some(quick.clone());
+                                let _ = deps
+                                    .ui_tx
+                                    .send(UiEvent::Bridge(BridgeIn::Note {
+                                        text: "image attached — answering with the quick model".into(),
+                                    }))
+                                    .await;
+                            }
+                            Err(e) => {
+                                let _ = deps
+                                    .ui_tx
+                                    .send(UiEvent::Error(format!(
+                                        "Could not switch to the quick model for the image: {e}"
+                                    )))
+                                    .await;
+                                return;
+                            }
+                        }
+                }
+            }
 
             // The user bubble shown immediately, before any events arrive.
             let local_id = format!(
@@ -455,20 +507,8 @@ fn spawn_prompt(client: &Client, session_id: &str, text: String, images: Vec<Ima
     });
 }
 
-/// The model to check for image capability: the session's current model when
-/// known, otherwise the user's default model.
-async fn image_model(
-    session: &Option<SessionInfo>,
-    client: &Client,
-) -> Option<ModelRef> {
-    if let Some(info) = session
-        && let Some(model) = info.model.clone() {
-            return Some(model);
-        }
-    client.default_model().await.ok().flatten()
-}
-
-async fn create_chat(client: &Client, deps: &Deps) -> Result<SessionInfo, ApiError> {    let scratch = deps.scratch();
+async fn create_chat(client: &Client, deps: &Deps) -> Result<SessionInfo, ApiError> {
+    let scratch = deps.scratch();
     if let Err(e) = std::fs::create_dir_all(&scratch) {
         eprintln!("opencode-spotlight: could not create scratch dir: {e}");
     }
