@@ -75,7 +75,7 @@ impl InputBar {
             .css_classes(["flat", "stop"])
             .build();
         let send_button = Button::builder()
-            .icon_name("document-send-symbolic")
+            .icon_name("mail-send-symbolic")
             .tooltip_text("Send (Enter)")
             .sensitive(false)
             .css_classes(["send"])
@@ -219,10 +219,11 @@ impl InputBar {
         self.refresh_send();
     }
 
-    /// Pill height while collapsed, taller entry once the chat card is open.
+    /// The entry keeps the pill's height in both shapes (Spotlight-style:
+    /// one-line input that scrolls internally).
     pub fn set_pill(&self, collapsed: bool) {
         self.pilled.set(collapsed);
-        self.scroller.set_size_request(-1, if collapsed { 36 } else { 72 });
+        self.scroller.set_size_request(-1, 36);
     }
 
     pub fn focus(&self) {
