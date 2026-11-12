@@ -1,6 +1,7 @@
 //! Common client types shared across the OpenCode service layer.
 
 pub mod events;
+pub mod hotkey_portal;
 pub mod http;
 pub mod service;
 

@@ -164,6 +164,7 @@ impl UiContext {
                 UiEvent::PermReplied { id } => format!("perm-replied {id}"),
                 UiEvent::Bridge(p) => format!("bridge {:?}", p),
                 UiEvent::PromptQueued => "prompt-queued".into(),
+                UiEvent::ToggleHotkey => "hotkey-activated".into(),
                 UiEvent::Error(m) => format!("error {m}"),
             };
             eprintln!("spotlight: event {summary}");
@@ -186,6 +187,9 @@ impl UiContext {
                 if let Some(window) = self.window.borrow().as_ref() {
                     window.set_usage(tokens, cost);
                 }
+            }
+            UiEvent::ToggleHotkey => {
+                UiContext::show_or_toggle(self, true);
             }
             UiEvent::Perm(perm) => {
                 self.perms.borrow_mut().push_back(perm);

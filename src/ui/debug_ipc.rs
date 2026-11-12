@@ -90,6 +90,7 @@ pub fn record_event(event: &UiEvent) {
         UiEvent::PermReplied { id } => format!("perm-replied {id}"),
         UiEvent::Bridge(p) => format!("bridge {:?}", p),
         UiEvent::PromptQueued => "prompt-queued".into(),
+        UiEvent::ToggleHotkey => "hotkey-activated".into(),
         UiEvent::Error(m) => format!("error {m}"),
     };
     RING.push(summary);

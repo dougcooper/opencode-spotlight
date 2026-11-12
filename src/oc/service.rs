@@ -57,6 +57,8 @@ pub enum UiEvent {
     Error(String),
     /// The message was accepted by the backend; clear the input now.
     PromptQueued,
+    /// The portal-registered global hotkey fired.
+    ToggleHotkey,
 }
 
 /// Tracks the session's current model and the image-flow auto-switch.
@@ -100,6 +102,20 @@ pub fn start(
 
 #[allow(unused_assignments)]
 async fn run(deps: Deps) {
+    // Bind the global hotkey via the xdg-desktop-portal (GNOME 45+). The
+    // desktop's custom-shortcut registry is dead on GNOME 50; the portal is
+    // the supported path. Runs independently of the connection loop.
+    {
+        let ui_tx = deps.ui_tx.clone();
+        let trigger = deps.config.keybinding.clone();
+        tokio::spawn(async move {
+            if let Err(why) =
+                crate::oc::hotkey_portal::run(ui_tx, trigger).await
+            {
+                eprintln!("opencode-spotlight: portal hotkey failed: {why}");
+            }
+        });
+    }
     let mut pending: VecDeque<Cmd> = VecDeque::new();
     #[allow(unused_assignments)] // set again after each ensure()
     let mut client: Option<Client> = None;

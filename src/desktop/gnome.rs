@@ -18,18 +18,24 @@ const MEDIA_KEYS_SCHEMA_BASE: &str = "/org/gnome/settings-daemon/plugins/media-k
 pub struct Gnome;
 
 fn desktop_entry_contents(binary_path: &str) -> String {
+    // Launches are wrapped in a transient systemd scope whose name carries the
+    // desktop file id (`app-dev.dougcooper.opencode_spotlight-<pid>.scope`):
+    // xdg-desktop-portal derives a host process's app id from that scope name,
+    // which the GlobalShortcuts portal requires. Underscores keep the dashed id
+    // unambiguous under the portal's unit-name pattern.
     format!(
         "[Desktop Entry]
 Type=Application
 Name=OpenCode Spotlight
 Comment=Summon a quick OpenCode chat with a hotkey
-Exec={binary_path}
+Exec=sh -c \"exec systemd-run --user --collect --scope --unit=app-dev.dougcooper.opencode-spotlight-$$ {binary}\"
 Icon=utilities-terminal
 Terminal=false
 Categories=Utility;Development;
 StartupNotify=true
 DBusActivatable=true
-"
+",
+        binary = binary_path,
     )
 }
 
