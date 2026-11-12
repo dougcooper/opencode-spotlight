@@ -75,7 +75,7 @@ impl InputBar {
             .css_classes(["flat", "stop"])
             .build();
         let send_button = Button::builder()
-            .icon_name("paper-plane-symbolic")
+            .icon_name("document-send-symbolic")
             .tooltip_text("Send (Enter)")
             .sensitive(false)
             .css_classes(["send"])
@@ -132,10 +132,15 @@ impl InputBar {
             controller.connect_key_pressed(move |_ctrl, keyval, _keycode, state| {
                 let enter = keyval == gtk4::gdk::Key::Return
                     || keyval == gtk4::gdk::Key::KP_Enter;
-                if enter && !state.contains(gtk4::gdk::ModifierType::SHIFT_MASK) {
+                let newline = state
+                    .intersects(gtk4::gdk::ModifierType::SHIFT_MASK
+                        | gtk4::gdk::ModifierType::ALT_MASK);
+                if enter && !newline {
                     actions.on_send();
                     return glib::Propagation::Stop;
                 }
+                // Shift+Enter and Alt+Enter fall through: the text view
+                // inserts the newline natively.
                 glib::Propagation::Proceed
             });
             text_view.add_controller(controller);
