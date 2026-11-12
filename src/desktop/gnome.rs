@@ -14,7 +14,6 @@ pub const KEYBINDING_PATH: &str = "/dev/dougcooper/opencode-spotlight/";
 const MEDIA_KEYS_LIST_KEY: &str = "/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings";
 const MEDIA_KEYS_SCHEMA_BASE: &str = "/org/gnome/settings-daemon/plugins/media-keys/";
 
-const TOGGLE_COMMAND: &str = "opencode-spotlight --toggle";
 
 pub struct Gnome;
 
@@ -81,7 +80,10 @@ impl DesktopIntegration for Gnome {
             write_entries(base.data_dir(), base.config_dir(), opts.binary_path.as_path())?;
 
         // Best-effort: requires the GNOME schemas; entries above always land.
-        let keybinding_path = match install_keybinding(&opts.binding) {
+        // The keybinding command must be an absolute path: the GNOME session
+        // PATH does not include ~/.cargo/bin.
+        let toggle_command = format!("{} --toggle", opts.binary_path.display());
+        let keybinding_path = match install_keybinding(&opts.binding, &toggle_command) {
             Ok(path) => Some(path),
             Err(e) => {
                 eprintln!("opencode-spotlight: keybinding registration skipped: {e}");
@@ -190,7 +192,7 @@ fn variant_str_list(values: &[String]) -> String {
 
 /// Insert our relocatable-schema path into the GNOME custom keybindings list
 /// and write the binding.
-fn install_keybinding(binding: &str) -> Result<String, IntegrationError> {
+fn install_keybinding(binding: &str, toggle_command: &str) -> Result<String, IntegrationError> {
     let existing = existing_keybindings()?;
     let updated: Vec<String> = existing
         .iter()
@@ -210,7 +212,7 @@ fn install_keybinding(binding: &str) -> Result<String, IntegrationError> {
     )?;
     dconf_write(
         &format!("{KEYBINDING_PATH}command"),
-        &variant_str(TOGGLE_COMMAND),
+        &variant_str(toggle_command),
     )?;
 
     // Verify: the list must now contain our path.
