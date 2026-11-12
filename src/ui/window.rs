@@ -146,8 +146,10 @@ impl OverlayWindow {
             .spacing(4)
             .css_classes(["chat-card"])
             .build();
-        // Transcript on top; the widget strip (connection, usage, actions)
-        // and the input pill sit at the bottom of the card.
+        // Transcript on top and stretching; the widget strip (connection,
+        // usage, actions) and the input pill dock at the bottom of the card.
+        transcript.webview.set_hexpand(true);
+        transcript.webview.set_vexpand(true);
         root.append(&transcript.webview);
         root.append(attachments.widget());
         root.append(&status);
