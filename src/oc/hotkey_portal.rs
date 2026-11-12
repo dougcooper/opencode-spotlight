@@ -40,6 +40,9 @@ pub async fn run(
         .await
         .map_err(|e| format!("global shortcuts session failed: {e}"))?;
 
+    // bind_shortcuts().await already includes the authorization-dialog
+    // response (ashpd's Proxy::request joins the response signal); errors
+    // propagate here, and the Activated stream below carries activations.
     shortcuts
         .bind_shortcuts(
             &session,
@@ -54,7 +57,9 @@ pub async fn run(
         .await
         .map_err(|e| format!("global shortcut binding failed: {e}"))?;
 
-    eprintln!("opencode-spotlight: global shortcut bound via portal ({SHORTCUT_ID})");
+    eprintln!(
+        "opencode-spotlight: global shortcut bound via portal ({SHORTCUT_ID}, waiting for Activated events)"
+    );
 
     let mut activated = shortcuts
         .receive_activated()
