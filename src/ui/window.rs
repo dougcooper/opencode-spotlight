@@ -51,12 +51,16 @@ window.spot {
   padding: 4px 6px;
 }
 
-/* Native contrast strokes on the pill's controls. */
+/* Native contrast strokes on the pill's controls; the accent send circle
+   and flat chips stay clean. */
 .chat-card .glass-pill button {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 22%, transparent);
 }
-.chat-card .glass-pill button.flat {
+.chat-card .glass-pill button.flat,
+.chat-card .glass-pill button.send-circle {
   box-shadow: none;
+  min-width: 30px;
+  min-height: 30px;
 }
 
 .chat-card .overlay-status { padding: 0 6px 2px; }

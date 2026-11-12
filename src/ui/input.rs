@@ -75,10 +75,10 @@ impl InputBar {
             .css_classes(["flat", "stop"])
             .build();
         let send_button = Button::builder()
-            .icon_name("mail-send-symbolic")
+            .icon_name("go-up-symbolic")
             .tooltip_text("Send (Enter)")
             .sensitive(false)
-            .css_classes(["send"])
+            .css_classes(["circular", "suggested-action", "send-circle"])
             .build();
 
         let magnifier = gtk4::Image::builder()
