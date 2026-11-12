@@ -161,6 +161,7 @@ struct DebugStateView {
     window_visible: bool,
     expanded: bool,
     size: (i32, i32),
+    permission_dialog: bool,
     busy: bool,
     connection: String,
     input_text: String,
@@ -196,6 +197,10 @@ async fn execute_on_main(context: &Rc<UiContext>, line: String) -> String {
         "model" => {
             context.toggle_model_chip();
             r#"{"ok":true,"toggled_model":true}"#.into()
+        }
+        "handoff" => {
+            context.handoff_to_terminal();
+            r#"{"ok":true,"handoff":true}"#.into()
         }
         "newchat" => {
             context.new_chat();
@@ -250,6 +255,7 @@ async fn state_view(context: &Rc<UiContext>) -> String {
             window_visible: false,
             expanded: false,
             size: (0, 0),
+            permission_dialog: false,
             busy: context.busy(),
             connection: context
                 .connection()
@@ -266,6 +272,7 @@ async fn state_view(context: &Rc<UiContext>) -> String {
         window_visible: window.is_visible(),
         expanded: window.is_expanded(),
         size: window.size(),
+        permission_dialog: context.permission_dialog_open(),
         busy: context.busy(),
         connection: context
             .connection()

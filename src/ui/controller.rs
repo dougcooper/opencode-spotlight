@@ -34,6 +34,8 @@ pub struct UiContext {
     paths: Paths,
     config: Config,
     perms: RefCell<VecDeque<PermReq>>,
+    current_perm: RefCell<Option<String>>,
+    open_dialog: RefCell<Option<adw::AlertDialog>>,
     conn: std::cell::RefCell<Option<ConnState>>,
     dialog_open: Cell<bool>,
     busy: Cell<bool>,
@@ -63,6 +65,8 @@ impl UiContext {
             paths,
             config,
             perms: RefCell::new(VecDeque::new()),
+            current_perm: RefCell::new(None),
+            open_dialog: RefCell::new(None),
             conn: RefCell::new(None),
             dialog_open: Cell::new(false),
             busy: Cell::new(false),
@@ -191,6 +195,15 @@ impl UiContext {
                 self.show_next_perm();
             }
             UiEvent::PermReplied { id } => {
+                if !id.is_empty()
+                    && self.current_perm.borrow().as_deref() == Some(id.as_str())
+                {
+                    self.current_perm.borrow_mut().take();
+                    if let Some(dialog) = self.open_dialog.borrow_mut().take() {
+                        dialog.force_close();
+                    }
+                    self.dialog_open.set(false);
+                }
                 if !id.is_empty() {
                     self.perms.borrow_mut().retain(|perm| perm.id != id);
                 }
@@ -231,6 +244,7 @@ impl UiContext {
         };
 
         self.dialog_open.set(true);
+        *self.current_perm.borrow_mut() = Some(perm.id.clone());
 
         let heading = format!("Permit {}?", perm.action);
         let mut body = perm.message.clone().unwrap_or_default();
@@ -251,6 +265,7 @@ impl UiContext {
         dialog.set_response_appearance("once", adw::ResponseAppearance::Suggested);
         dialog.set_response_appearance("reject", adw::ResponseAppearance::Destructive);
         dialog.set_close_response("reject");
+        *self.open_dialog.borrow_mut() = Some(dialog.clone());
 
         // `choose` resolves when the dialog is dismissed (close = reject).
         let weak = Rc::downgrade(self);
@@ -260,6 +275,8 @@ impl UiContext {
             None::<&gio::Cancellable>,
             move |response| {
                 let Some(ctx) = weak.upgrade() else { return };
+                *ctx.current_perm.borrow_mut() = None;
+                *ctx.open_dialog.borrow_mut() = None;
                 ctx.dialog_open.set(false);
                 let _ = ctx.cmd_tx.send_blocking(Cmd::ReplyPermission {
                     request_id: request_id.clone(),

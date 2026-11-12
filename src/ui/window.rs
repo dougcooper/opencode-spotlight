@@ -23,15 +23,41 @@ use crate::bridge::BridgeIn;
 use crate::oc::service::ConnState;
 
 pub const RESOURCE_CSS: &str = "
-window.spot { background: transparent; }
-.chat-card { padding: 8px; }
+/* Frosted-glass surface: nearly opaque so text stays crisp, with a faint
+   gradient, hairline border, and specular top edge. */
+window.spot { border-radius: 24px; background: transparent; box-shadow: 0 12px 44px alpha(#0a0a0f, 0.42); }
+.chat-card { padding: 8px; border-radius: 24px; }
+
+.chat-card.light {
+  background: linear-gradient(168deg, rgba(249,249,251,0.99), rgba(238,238,242,0.99) 55%, rgba(231,231,236,0.99));
+  color: rgb(35 35 40);
+  border: 1px solid alpha(#5b5b66, 0.18);
+}
+.chat-card.dark {
+  background: linear-gradient(168deg, rgba(44,44,50,0.985), rgba(33,33,38,0.985) 60%, rgba(27,27,32,0.985));
+  color: rgb(242 242 247);
+  border: 1px solid alpha(#ffffff, 0.10);
+}
+
+/* the search pill inside the card */
+.chat-card .glass-pill {
+  background: rgba(255,255,255,0.62);
+  border-radius: 22px;
+  border: 1px solid alpha(#5b5b66, 0.10);
+  padding: 4px 6px;
+}
+.chat-card.dark .glass-pill {
+  background: rgba(255,255,255,0.075);
+  border: 1px solid alpha(#ffffff, 0.10);
+}
+
 .chat-card .overlay-status { padding: 0 4px 2px; }
 .dot { font-size: 10px; }
 .conn-ok { color: @success_color; }
 .conn-warn { color: @warning_color; }
 .conn-err { color: @error_color; }
 .attachments { padding: 2px 4px; }
-.attachment-chip { background: alpha(@accent_color, 0.2); border-radius: 6px; padding: 2px 6px; }
+.attachment-chip { background: alpha(@accent_color, 0.24); border-radius: 6px; padding: 2px 6px; }
 ";
 const APP_TITLE: &str = "OpenCode Spotlight";
 const COLLAPSED: (i32, i32) = (600, 62);
@@ -62,6 +88,7 @@ impl OverlayWindow {
             .default_height(COLLAPSED.1)
             .build();
         window.add_css_class("spot");
+        window.add_css_class(if adw::StyleManager::default().is_dark() { "dark" } else { "light" });
 
         let transcript = Transcript::new(make_copy_sink());
         let attachments = AttachmentTray::build();
@@ -318,6 +345,9 @@ impl OverlayWindow {
     }
 
     pub fn push_theme(&self, dark: bool) {
+        self.window.remove_css_class("light");
+        self.window.remove_css_class("dark");
+        self.window.add_css_class(if dark { "dark" } else { "light" });
         self.transcript.send(&BridgeIn::Theme { dark });
     }
 

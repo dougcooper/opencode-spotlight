@@ -30,7 +30,7 @@ body.dark {
 html, body {
   height: 100%;
   margin: 0;
-  background: var(--bg);
+  background: transparent;
   color: var(--fg);
   font-family: inherit;
   font-size: 14px;
@@ -115,8 +115,8 @@ html, body {
   position: relative;
   margin: 8px 0;
   padding: 10px 12px;
-  background: var(--code-bg);
-  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--code-bg) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
   border-radius: 8px;
   overflow-x: auto;
 }
@@ -144,7 +144,7 @@ html, body {
   align-items: baseline;
   font-size: 12px;
   color: var(--dim);
-  background: var(--card);
+  background: color-mix(in srgb, var(--card) 55%, transparent);
   border-radius: 7px;
   padding: 3px 8px;
 }

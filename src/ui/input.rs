@@ -59,6 +59,7 @@ impl InputBar {
         let input_row = GtkBox::builder()
             .orientation(Orientation::Horizontal)
             .spacing(6)
+            .css_classes(["glass-pill"])
             .build();
 
         let model_button = Button::builder()
