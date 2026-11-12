@@ -59,7 +59,7 @@ window.spot {
   box-shadow: none;
 }
 
-.chat-card .overlay-status { padding: 0 4px 2px; }
+.chat-card .overlay-status { padding: 0 6px 2px; }
 .dot { font-size: 10px; }
 .conn-ok { color: @success_color; }
 .conn-warn { color: @warning_color; }
@@ -146,9 +146,11 @@ impl OverlayWindow {
             .spacing(4)
             .css_classes(["chat-card"])
             .build();
-        root.append(&status);
+        // Transcript on top; the widget strip (connection, usage, actions)
+        // and the input pill sit at the bottom of the card.
         root.append(&transcript.webview);
         root.append(attachments.widget());
+        root.append(&status);
         root.append(&input.widget);
 
         let toast = adw::ToastOverlay::new();
