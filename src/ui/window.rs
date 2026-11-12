@@ -291,7 +291,6 @@ impl OverlayWindow {
         self.attachments
             .widget()
             .set_visible(self.attachments.len() > 0);
-        self.input.set_pill(false);
         self.retarget(EXPANDED);
         true
     }
@@ -303,7 +302,6 @@ impl OverlayWindow {
         self.transcript.webview.set_visible(false);
         self.status.set_visible(false);
         self.attachments.widget().set_visible(false);
-        self.input.set_pill(true);
         // Pin the minimum so hidden-but-sizeable children cannot inflate the
         // pill's mapped height.
         self.window.set_size_request(COLLAPSED.0, COLLAPSED.1);

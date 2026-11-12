@@ -26,7 +26,6 @@ pub struct InputBar {
     pub hint: Label,
     pub placeholder: Label,
     scroller: gtk4::ScrolledWindow,
-    pilled: Cell<bool>,
     busy: Cell<bool>,
     staged_count: Cell<usize>,
     has_text: Cell<bool>,
@@ -116,7 +115,7 @@ impl InputBar {
             let action_row = GtkBox::builder()
                 .orientation(Orientation::Horizontal)
                 .spacing(4)
-                .valign(gtk4::Align::Start)
+                .valign(gtk4::Align::Center)
                 .build();
             action_row.append(&stop_button);
             action_row.append(&send_button);
@@ -171,7 +170,6 @@ impl InputBar {
             hint,
             placeholder: placeholder.clone(),
             scroller: scroller.clone(),
-            pilled: Cell::new(true),
             busy: Cell::new(false),
             staged_count: Cell::new(0),
             has_text: Cell::new(false),
@@ -189,6 +187,7 @@ impl InputBar {
                     let had = bar.has_text.get();
                     bar.has_text.set(!text.is_empty());
                     bar.placeholder.set_visible(text.is_empty());
+                    bar.update_height();
                     if had != bar.has_text.get() {
                         bar.refresh_send();
                     }
@@ -201,6 +200,7 @@ impl InputBar {
     pub fn set_text(&self, text: &str) {
         self.text_view.buffer().set_text(text);
         self.has_text.set(!text.is_empty());
+        self.update_height();
         self.refresh_send();
     }
 
@@ -216,14 +216,20 @@ impl InputBar {
         self.text_view.buffer().set_text("");
         self.has_text.set(false);
         self.placeholder.set_visible(true);
+        self.update_height();
         self.refresh_send();
     }
 
-    /// The entry keeps the pill's height in both shapes (Spotlight-style:
-    /// one-line input that scrolls internally).
-    pub fn set_pill(&self, collapsed: bool) {
-        self.pilled.set(collapsed);
-        self.scroller.set_size_request(-1, 36);
+    /// Grow the input to fit the content: one line at the pill height,
+    /// capping at five lines before it scrolls internally.
+    fn update_height(&self) {
+        let buffer = self.text_view.buffer();
+        let (y, line_height) = self.text_view.line_yrange(&buffer.end_iter());
+        const VERTICAL_CHROME: i32 = 8 + 8 + 2; // text margins + sliver
+        const MIN: i32 = 36;
+        const MAX: i32 = 140;
+        let want = (y + line_height + VERTICAL_CHROME).clamp(MIN, MAX);
+        self.scroller.set_size_request(-1, want);
     }
 
     pub fn focus(&self) {
