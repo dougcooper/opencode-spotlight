@@ -20,13 +20,35 @@ contract is a plain command.
 ## Build & install
 
 Building needs the GTK4 + libadwaita + WebKitGTK 6 development libraries
-(`gtk4-devel`, `libadwaita-devel`, `webkitgtk6.0-devel` — on immutable Fedora
-systems, build them in a toolbox container; the binary then runs on the host
-against the same runtime).
+(`gtk4-devel`, `libadwaita-devel`, `webkitgtk6.0-devel`).
+
+**Option A — build container (no host tooling changes at all):**
 
 ```sh
-cargo build --release
-# or to install the binary:
+podman build -t spotlight-builder .
+podman run --rm --userns=keep-id --security-opt label=disable \
+    -v "$PWD:/project" -w /project spotlight-builder cargo build --release
+# tests: same volume mount, `cargo test`
+```
+
+The compiled binary lands in `./target/` on the host and runs directly on a
+Fedora 44+ desktop (the image builds against the same runtime libs the host
+ships). See [Containerfile](Containerfile) for the details.
+
+**Option B — toolbox container on an immutable Fedora system** (what the
+development sessions used):
+
+```sh
+toolbox create spotlight-build
+podman exec -u 0 spotlight-build dnf -y install \
+    gtk4-devel libadwaita-devel webkitgtk6.0-devel gcc pkgconf-pkg-config
+toolbox run -c spotlight-build cargo build --release
+```
+
+**Option C — plain host** (layer the -devel packages with rpm-ostree, or boot
+into a regular Fedora where you can just `dnf install` them): then:
+
+```sh
 cargo install --path .
 ```
 
