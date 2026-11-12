@@ -3,15 +3,12 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::rc::Rc;
 
 use libadwaita as adw;
 use adw::prelude::*;
 use gio;
 use gtk4::glib;
-use std::os::unix::process::CommandExt;
 
 
 use super::input::InputActions;
@@ -410,90 +407,47 @@ impl UiContext {
 
     // ---- desktop actions ---------------------------------------------------
 
-    /// Open the scratch chat in a real terminal running the OpenCode TUI
-    /// (fact 25).
-    pub fn handoff_to_terminal(self: &Rc<Self>) {
-        let scratch = self.config.scratch_dir(&self.paths);
-        let _ = std::fs::create_dir_all(&scratch);
-        match handoff_command(&self.config, &scratch) {
-            Some(argv) => {
-                let (program, args) = argv.split_first().expect("non-empty argv");
-                let result = Command::new(program)
-                    .args(args.iter().map(String::as_str))
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .process_group(0)
-                    .spawn();
-                if let Err(e) = result {
-                    self.toast_in_window(&format!("Could not open the terminal ({program}): {e}"));
-                }
-            }
-            None => {
-                self.toast_in_window(
-                    "No terminal found — set handoff_command in the config.",
-                );
-            }
-        }
+    /// Open the current chat in a real terminal running the OpenCode TUI
+    /// (fact 25). The backend picks the terminal and the session id.
+    pub fn handoff_to_terminal(&self) {
+        let _ = self.cmd_tx.send_blocking(Cmd::Handoff);
     }
 
     pub fn new_chat(&self) {
         let _ = self.cmd_tx.send_blocking(Cmd::NewChat);
     }
 
-    /// Debug hook for the model toggle chip.
-    pub fn toggle_model_chip(&self) {
-        self.toggle_model();
+
+    pub fn debug_send(&self, text: &str) {
+        let Some(window) = self.window_take() else { return };
+        window.input.set_text(text);
+        self.send_message();
     }
 
-    fn toast_in_window(&self, message: &str) {
-        if let Some(window) = self.window.borrow().as_ref() {
-            window.toast(message);
-        } else {
-            eprintln!("opencode-spotlight: {message}");
+    pub fn debug_paste_png(&self, bytes: Vec<u8>) {
+        let Some(window) = self.window_take() else { return };
+        if let Err(why) = window.attachments.add_from_png(bytes) {
+            window.toast(&why);
+            return;
         }
-    }
-
-    // ---- debug IPC ---------------------------------------------------------
-
-    /// The overlay window handle for the debug surface.
-    pub fn window_take(&self) -> Option<Rc<OverlayWindow>> {
-        self.window.borrow().clone()
+        window.input.set_attachments(window.attachments.len());
     }
 
     pub fn busy(&self) -> bool {
         self.busy.get()
     }
 
-    pub fn connection(&self) -> Option<ConnState> {
+    pub fn connection(&self) -> Option<crate::oc::service::ConnState> {
         self.conn.borrow().clone()
     }
 
-    /// Make sure the window exists and is presented (debug determinism).
-    pub fn debug_summon(self: &Rc<Self>) {
-        match self.window.borrow().as_ref() {
-            Some(window) => window.present(),
-            None => self.show_or_toggle(false),
-        }
+    /// Debug/test handles used by the SPOTLIGHT_DEBUG_IPC worker.
+    pub fn toggle_model_chip(&self) {
+        self.toggle_model();
     }
 
-    /// Type into the input bar exactly as if the user had, then send.
-    pub fn debug_send(self: &Rc<Self>, text: &str) {
-        self.debug_summon();
-        if let Some(window) = self.window.borrow().as_ref() {
-            window.input.set_text(text);
-        }
-        self.send_message();
-    }
-
-    /// Stage a PNG like a Ctrl+V paste.
-    pub fn debug_paste_png(self: &Rc<Self>, bytes: Vec<u8>) {
-        self.debug_summon();
-        if let Some(window) = self.window.borrow().as_ref() {
-            match window.attachments.add_from_png(bytes) {
-                Ok(_name) => window.input.set_attachments(window.attachments.len()),
-                Err(why) => window.toast(&why),
-            }
-        }
+    pub fn window_take(&self) -> Option<Rc<OverlayWindow>> {
+        self.window.borrow().clone()
     }
 }
 
@@ -508,80 +462,3 @@ impl InputActions for UiContext {
         self.toggle_model();
     }
 }
-
-/// Build the terminal hand-off command: the config override when present,
-/// otherwise a detection pass over known terminals. `{dir}` is substituted.
-fn handoff_command(config: &Config, scratch_dir: &Path) -> Option<Vec<String>> {
-    let target = scratch_dir.to_string_lossy().to_string();
-    if let Some(template) = &config.handoff_command {
-        let words = split_words(template);
-        if words.is_empty() {
-            return None;
-        }
-        return Some(
-            words
-                .into_iter()
-                .map(|word| word.replace("{dir}", &target))
-                .collect(),
-        );
-    }
-    const CANDIDATES: &[(&str, &[&str])] = &[
-        ("ptyxis", &["--directory", "{dir}", "opencode"]),
-        ("kgx", &["--working-directory", "{dir}", "opencode"]),
-        ("gnome-terminal", &["--working-directory={dir}", "--", "opencode"]),
-        ("konsole", &["--workdir", "{dir}", "-e", "opencode"]),
-    ];
-    for (binary, template) in CANDIDATES {
-        if exec_in_path(binary) {
-            return Some(
-                std::iter::once((*binary).to_string())
-                    .chain(template.iter().map(|word| word.replace("{dir}", &target)))
-                    .collect(),
-            );
-        }
-    }
-    None
-}
-
-/// Minimal shell-like word splitting (quotes respected, no escapes).
-fn split_words(template: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut quote: Option<char> = None;
-    for ch in template.chars() {
-        match quote {
-            Some(q) => {
-                if ch == q {
-                    quote = None;
-                } else {
-                    current.push(ch);
-                }
-            }
-            None => match ch {
-                '\'' | '"' => quote = Some(ch),
-                ch if ch.is_whitespace() => {
-                    if !current.is_empty() {
-                        words.push(std::mem::take(&mut current));
-                    }
-                }
-                ch => current.push(ch),
-            },
-        }
-    }
-    if !current.is_empty() {
-        words.push(current);
-    }
-    words
-}
-
-fn exec_in_path(binary: &str) -> bool {
-    let Ok(paths) = std::env::var("PATH") else {
-        return false;
-    };
-    paths
-        .split(':')
-        .map(|dir| PathBuf::from(dir).join(binary))
-        .any(|candidate| candidate.is_file())
-}
-
-use std::path::Path;

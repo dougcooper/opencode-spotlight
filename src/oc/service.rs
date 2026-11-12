@@ -26,6 +26,7 @@ pub enum Cmd {
     Interrupt,
     SwitchModel(ModelRef),
     ReplyPermission { request_id: String, decision: String, message: Option<String> },
+    Handoff,
     RetryConnect,
 }
 
@@ -425,6 +426,39 @@ async fn feed(
                 let _ = deps.ui_tx.send(UiEvent::Error(format!("Could not start a new chat: {e}"))).await;
             }
         },
+        Cmd::Handoff => {
+            let scratch = deps.scratch();
+            let _ = std::fs::create_dir_all(&scratch);
+            let session_id = session.as_ref().map(|s| s.id.clone());
+            match terminal_argv(deps, &scratch, session_id.as_deref()) {
+                Some(argv) => {
+                    let (program, args) = argv.split_first().expect("non-empty argv");
+                    let result = {
+                        use std::os::unix::process::CommandExt;
+                        std::process::Command::new(program)
+                            .args(args.iter().map(String::as_str))
+                            .stdout(std::process::Stdio::null())
+                            .stderr(std::process::Stdio::null())
+                            .process_group(0)
+                            .spawn()
+                    };
+                    if let Err(e) = result {
+                        let _ = deps
+                            .ui_tx
+                            .send(UiEvent::Error(format!("Could not open the terminal ({program}): {e}")))
+                            .await;
+                    }
+                }
+                None => {
+                    let _ = deps
+                        .ui_tx
+                        .send(UiEvent::Error(
+                            "No terminal found — set handoff_command in the config.".into(),
+                        ))
+                        .await;
+                }
+            }
+        }
         Cmd::Interrupt => {
             if active.is_empty() {
                 return;
@@ -470,6 +504,100 @@ async fn feed(
         }
         Cmd::RetryConnect => {}
     }
+}
+
+/// Build the terminal hand-off command: the config override when present,
+/// otherwise detection over known terminals. `{dir}` and `{session}` are
+/// substituted when the template uses them.
+fn terminal_argv(
+    deps: &Deps,
+    scratch_dir: &std::path::Path,
+    session_id: Option<&str>,
+) -> Option<Vec<String>> {
+    let target = scratch_dir.to_string_lossy().to_string();
+    if let Some(template) = &deps.config.handoff_command {
+        let mut words: Vec<String> = split_words(template)
+            .into_iter()
+            .map(|word| word.replace("{dir}", &target))
+            .collect();
+        if let Some(session_id) = session_id {
+            for word in words.iter_mut() {
+                if word.contains("{session}") {
+                    *word = word.replace("{session}", session_id);
+                }
+            }
+        }
+        // Drop a bare `{session}` placeholder when no session exists.
+        words.retain(|word| *word != "{session}");
+        if words.is_empty() {
+            return None;
+        }
+        return Some(words);
+    }
+
+    const CANDIDATES: &[(&str, &[&str])] = &[
+        ("ptyxis", &["--working-directory={dir}", "--", "opencode"]),
+        ("kgx", &["--working-directory", "{dir}", "opencode"]),
+        ("gnome-terminal", &["--working-directory={dir}", "--", "opencode"]),
+        ("konsole", &["--workdir", "{dir}", "-e", "opencode"]),
+    ];
+    for (binary, template) in CANDIDATES {
+        if exec_in_path(binary) {
+            let mut argv: Vec<String> = std::iter::once((*binary).to_string())
+                .chain(template.iter().map(|word| word.replace("{dir}", &target)))
+                .collect();
+            match session_id {
+                Some(id) => {
+                    argv.push("--session".into());
+                    argv.push(id.to_string());
+                }
+                None => argv.push("--continue".into()),
+            }
+            return Some(argv);
+        }
+    }
+    None
+}
+
+/// Minimal shell-like word splitting (quotes respected, no escapes).
+fn split_words(template: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    for ch in template.chars() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                } else {
+                    current.push(ch);
+                }
+            }
+            None => match ch {
+                '\'' | '"' => quote = Some(ch),
+                ch if ch.is_whitespace() => {
+                    if !current.is_empty() {
+                        words.push(std::mem::take(&mut current));
+                    }
+                }
+                ch => current.push(ch),
+            },
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
+fn exec_in_path(binary: &str) -> bool {
+    let Ok(paths) = std::env::var("PATH") else {
+        return false;
+    };
+    paths
+        .split(':')
+        .map(|dir| std::path::PathBuf::from(dir).join(binary))
+        .any(|candidate| candidate.is_file())
 }
 
 fn spawn_prompt(client: &Client, session_id: &str, text: String, images: Vec<ImageDto>, deps: &Deps) {

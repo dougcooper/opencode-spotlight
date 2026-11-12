@@ -110,8 +110,9 @@ const CONFIG_TEMPLATE: &str = r#"# opencode-spotlight configuration
 #keybinding = "<Super>space"
 
 # Terminal command used by the TUI hand-off button.
-# {dir} is replaced with the scratch directory.
-#handoff_command = "ptyxis --directory {dir} opencode"
+# {dir} is replaced with the scratch directory and {session} with the
+# session id of the chat being handed off.
+#handoff_command = "ptyxis --working-directory={dir} -- opencode --session {session}"
 
 # The quick/deep model pair for the one-tap toggle chip.
 # Quick defaults to your OpenCode default model when unset.
