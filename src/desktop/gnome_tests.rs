@@ -31,7 +31,11 @@ fn entries_are_dbus_activatable_and_point_at_the_binary() {
 
     let text = fs::read_to_string(&desktop).unwrap();
     assert!(text.contains("DBusActivatable=true"), "desktop entry: {text}");
-    assert!(text.contains("Exec=/usr/local/bin/opencode-spotlight"), "desktop entry: {text}");
+    let expected =
+        "Exec=sh -c \"exec systemd-run --user --collect --scope --unit=app-dev.dougcooper.opencode-spotlight-$$ /usr/local/bin/opencode-spotlight\"";
+    text.contains(expected)
+        .then_some(())
+        .expect("scoped launcher Exec line");
     assert!(text.starts_with("[Desktop Entry]"), "desktop entry: {text}");
 
     let autotext = fs::read_to_string(&autostart).expect("autostart");

@@ -44,6 +44,13 @@ window.spot {
   border: 1px solid color-mix(in srgb, @accent_bg_color 5%, alpha(#ffffff, 0.15));
 }
 
+.window.spot.solid .chat-card {
+  background: color-mix(in srgb, @accent_bg_color 7%, @window_bg_color);
+}
+window.spot.solid .chat-card .glass-pill {
+  background: color-mix(in srgb, @accent_bg_color 4%, @card_bg_color);
+}
+
 .chat-card .glass-pill {
   background: color-mix(in srgb, transparent 12%,
       color-mix(in srgb, @accent_bg_color 5%, @card_bg_color));
@@ -375,6 +382,14 @@ impl OverlayWindow {
     pub fn set_model_chip(&self, label: &str, visible: bool) {
         self.model_chip.set_label(label);
         self.model_chip.set_visible(visible);
+    }
+
+    /// Solid-glass mode: fully opaque surfaces, tint and edge unchanged.
+    pub fn set_solid(&self, solid: bool) {
+        self.window.remove_css_class("solid");
+        if solid {
+            self.window.add_css_class("solid");
+        }
     }
 
     pub fn push_theme(&self, dark: bool) {

@@ -98,10 +98,12 @@ impl UiContext {
         if first {
             if let Some(app) = self.app.borrow().as_ref() {
                 let window = OverlayWindow::build(app, self);
+                window.set_solid(self.config.glass_solid);
                 *self.window.borrow_mut() = Some(window);
             } else {
                 return;
             }
+
             // The transcript can receive now: ask the backend for a fresh
             // sync (history + connection + model state).
             let _ = self.cmd_tx.send_blocking(Cmd::RetryConnect);

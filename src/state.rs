@@ -87,6 +87,10 @@ pub struct Config {
     pub handoff_command: Option<String>,
     /// The quick/deep model pair; the chip is shown only when both are set.
     pub models: Option<ModelsCfg>,
+    /// Fully opaque glass surfaces (no see-through tint) while keeping the
+    /// accent tint, border, and edge treatment.
+    #[serde(default)]
+    pub glass_solid: bool,
 }
 
 impl Default for Config {
@@ -96,6 +100,7 @@ impl Default for Config {
             keybinding: default_keybinding(),
             handoff_command: None,
             models: None,
+            glass_solid: false,
         }
     }
 }
@@ -113,6 +118,9 @@ const CONFIG_TEMPLATE: &str = r#"# opencode-spotlight configuration
 # {dir} is replaced with the scratch directory and {session} with the
 # session id of the chat being handed off.
 #handoff_command = "ptyxis --working-directory={dir} -- opencode --session {session}"
+
+# Fully opaque glass (keeps the tint, border, and accent edge).
+#glass_solid = true
 
 # The quick/deep model pair for the one-tap toggle chip.
 # Quick defaults to your OpenCode default model when unset.
