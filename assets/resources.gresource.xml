@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/dev/dougcooper/opencode-spotlight">
+    <file compressed="true">webview/index.html</file>
+    <file compressed="true">webview/style.css</file>
+    <file compressed="true">webview/app.js</file>
+    <file compressed="true">webview/vendor/marked.min.js</file>
+    <file compressed="true">webview/vendor/purify.min.js</file>
+    <file compressed="true">webview/vendor/highlight.min.js</file>
+  </gresource>
+</gresources>
