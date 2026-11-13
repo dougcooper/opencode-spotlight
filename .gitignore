@@ -1,1 +1,3 @@
 /target
+# cargo home cache that container builds (keep-id) can place inside the repo
+/.cargo/
