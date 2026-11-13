@@ -1,7 +1,13 @@
 # opencode-spotlight — task runner.
 #
-# Builds happen inside the spotlight-builder container (see Containerfile);
-# run/toggle/install execute the built binary directly on the host.
+# Builds happen inside the spotlight-builder image (see Containerfile), which
+# uses cargo-chef to keep dependency compilation in cached image layers —
+# source changes only recompile the app. The binary is built in the image and
+# extracted to ./target/{release,debug}/ on the host, so run/toggle/install
+# execute it on the host directly, as before.
+#
+# test/lint run at image-build time (only the final layer re-runs on source
+# changes). fmt is the one bind-mount run: formatting needs no compilation.
 
 set shell := ["bash", "-cu"]
 
@@ -10,34 +16,36 @@ bin := "./target/release/opencode-spotlight"
 default:
     @just --list
 
-# Rebuild the spotlight-builder container image (Containerfile)
+# Rebuild the spotlight-builder image (default stage = release builder)
 image:
     podman build -t spotlight-builder .
 
-# Run cargo inside the build container (mounts the repo)
-cargo *args:
-    podman run --rm --userns=keep-id --security-opt label=disable \
-        -v "$PWD:/project" -w /project spotlight-builder cargo {{args}}
-
-# Debug build
-build:
-    just cargo build
-
-# Release build (what install/run/toggle use)
+# Build the release binary in the image, extract it to ./target/release
 build-release:
-    just cargo build --release
+    podman build --target builder -t spotlight-builder .
+    mkdir -p target/release
+    podman run --rm spotlight-builder cat /project/target/release/opencode-spotlight > target/release/opencode-spotlight
+    chmod +x target/release/opencode-spotlight
 
-# Run the test suite (container)
+# Debug build (reuses the dev-profile chef layers)
+build:
+    podman build --target debug -t spotlight-debug .
+    mkdir -p target/debug
+    podman run --rm spotlight-debug cat /project/target/debug/opencode-spotlight > target/debug/opencode-spotlight
+    chmod +x target/debug/opencode-spotlight
+
+# Run the test suite (image-build time; chef-cached)
 test:
-    just cargo test
+    podman build --target test -t spotlight-test .
 
-# Clippy with warnings as errors (container)
+# Clippy with warnings as errors (image-build time; chef-cached)
 lint:
-    just cargo clippy --all-targets -- -D warnings
+    podman build --target lint -t spotlight-lint .
 
-# Format code
+# Format code (bind-mount run; no compilation involved)
 fmt:
-    just cargo fmt
+    podman run --rm --userns=keep-id --security-opt label=disable \
+        -v "$PWD:/project" -w /project spotlight-builder cargo fmt
 
 # Make sure a binary exists (release), building it if not
 [private]

@@ -26,20 +26,22 @@ Building needs the GTK4 + libadwaita + WebKitGTK 6 development libraries
 
 ```sh
 podman build -t spotlight-builder .
-podman run --rm --userns=keep-id --security-opt label=disable \
-    -v "$PWD:/project" -w /project spotlight-builder cargo build --release
-# tests: same volume mount, `cargo test`
+podman run --rm spotlight-builder \
+    cat /project/target/release/opencode-spotlight > opencode-spotlight
+chmod +x opencode-spotlight
 ```
 
-The compiled binary lands in `./target/` on the host and runs directly on a
-Fedora 44+ desktop (the image builds against the same runtime libs the host
-ships). See [Containerfile](Containerfile) for the details.
+The image does a [cargo-chef](https://github.com/LukeMathWalker/cargo-chef)
+build: dependency compilation is baked into image layers that only re-bake
+when `Cargo.toml`/`Cargo.lock` change, so source edits recompile only the app.
+The binary is built inside the image against the same GTK/libadwaita/
+WebKitGTK runtime libs a Fedora 44+ desktop ships, then extracted to the host.
 
 **Even simpler**: the repo ships a [justfile](justfile) wrapping all of this —
 `just build-release`, `just test`, `just lint`, `just image`, `just run`,
-`just toggle`, `just install`, `just just-stop`-style commands throughout;
-`just` with no arguments lists them all. Builds/tests always run in the
-container; `run`/`toggle`/`install` execute the built binary on the host.
+`just toggle`, `just install`, `just stop`; `just` with no arguments lists
+them all. Builds/tests always run in the container;
+`run`/`toggle`/`install` execute the built binary on the host.
 
 **Option B — toolbox container on an immutable Fedora system** (what the
 development sessions used):

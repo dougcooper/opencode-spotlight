@@ -1,0 +1,4 @@
+# Never let host build state shadow what the image layers produce
+/target
+/.cargo
+/.git
